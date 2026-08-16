@@ -1,0 +1,8 @@
+openai-whisper
+sounddevice
+soundfile
+anthropic
+gTTS
+pygame
+numpy
+pynput
