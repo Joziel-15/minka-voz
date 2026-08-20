@@ -1,8 +1,11 @@
-openai-whisper
+faster-whisper>=1.0.0
+numpy
 sounddevice
 soundfile
-anthropic
-gTTS
-pygame
-numpy
-pynput
+webrtcvad
+RPi.GPIO
+luma.oled
+luma.core
+
+# Opcional (lo instala instalar.sh): TTS offline de alta calidad
+# piper-tts

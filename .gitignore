@@ -3,3 +3,6 @@ __pycache__/
 *.db
 *.pt
 *.pyc
+*.onnx
+*.wav
+.cache/

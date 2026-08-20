@@ -1,0 +1,19 @@
+# Plantilla de servicio systemd para MINKA VOZ.
+# instalar.sh genera esta unidad automáticamente con tu usuario y ruta;
+# este archivo es solo referencia para instalación manual.
+
+[Unit]
+Description=MINKA VOZ — Traductor Kogui<->Español (Raspberry Pi)
+After=sound.target multi-user.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/minka-voz
+ExecStart=/home/pi/minka-voz/venv/bin/python /home/pi/minka-voz/minka_voz.py
+Restart=on-failure
+RestartSec=5
+Environment=MINKA_MODEL=base
+
+[Install]
+WantedBy=multi-user.target
