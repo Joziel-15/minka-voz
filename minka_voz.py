@@ -1,119 +1,80 @@
 #!/usr/bin/env python3
 """
-MINKA VOZ — Traductor de voz Kogui <-> Español
-Con diccionario propio, historial y push-to-talk con ESPACIO
-Usa Google Gemini para traducción (gratis)
+MINKA VOZ — Traductor de voz Kogui <-> Español (versión Raspberry Pi)
+Escucha continua con detección de voz (VAD), botón físico para cambiar
+de idioma y pantalla OLED SSD1306 mostrando el modo activo.
+Traducción 100% local vía diccionario SQLite (sin APIs externas).
 """
 
 import os
-import sys
 import time
 import tempfile
 import threading
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+import webrtcvad
 import whisper
 from gtts import gTTS
 import pygame
-from pynput import keyboard
+import RPi.GPIO as GPIO
+from luma.core.interface.serial import i2c
+from luma.core.render import canvas
+from luma.oled.device import ssd1306
 import database as db
 
-# ── Configuración ───────────────────────────────────────────────────────────────
+# ── Configuración general ────────────────────────────────────────────────
 SAMPLE_RATE = 16000
+FRAME_MS = 30                                   # duración de cada bloque de audio analizado
+FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)
+SILENCIO_MAX_FRAMES = int(1000 / FRAME_MS)      # ~1 segundo de silencio corta la frase
+VAD_AGRESIVIDAD = 2                             # 0 (permisivo) - 3 (estricto)
 
-KOGUI_CONTEXTO = """
-Eres un traductor especializado en la lengua Kogui (Kággaba),
-lengua indígena de la Sierra Nevada de Santa Marta, Colombia.
-Responde ÚNICAMENTE con la traducción, sin explicaciones.
-Si no conoces una palabra exacta, usa la más cercana e indícalo entre paréntesis.
-Lengua SOV, sin género gramatical.
-"""
+# ── Pines GPIO (BCM) ─────────────────────────────────────────────────────
+PIN_BOTON_IDIOMA = 27   # botón para alternar Kogui<->Español
+# El botón de "encendido" es el encendido físico de la Pi: al arrancar,
+# este script corre solo (via systemd) y entra directo a escucha continua.
 
-# ── Colores ─────────────────────────────────────────────────────────────────────
-R  = "\033[0m"
-G  = "\033[92m"
-B  = "\033[94m"
-Y  = "\033[93m"
-RD = "\033[91m"
-GR = "\033[90m"
-CY = "\033[96m"
-BO = "\033[1m"
-MG = "\033[95m"
+# ── Pantalla OLED SSD1306 (I2C) ──────────────────────────────────────────
+serial = i2c(port=1, address=0x3C)
+oled = ssd1306(serial)
 
-# ── Estado global ────────────────────────────────────────────────────────────────
-grabando       = False
-audio_chunks   = []
-modo           = "k2e"
-procesando     = False
-espacio_activo = False
+# ── Estado global ─────────────────────────────────────────────────────────
+modo = "k2e"          # "k2e" = Kogui->Español | "e2k" = Español->Kogui
 modelo_whisper = None
+procesando = False
 
-# ── UI ───────────────────────────────────────────────────────────────────────────
-def cls():
-    os.system('clear')
+# ── Pantalla OLED ─────────────────────────────────────────────────────────
+def mostrar_oled(estado="Escuchando..."):
+    etiqueta = "Kogui -> Español" if modo == "k2e" else "Español -> Kogui"
+    with canvas(oled) as draw:
+        draw.text((0, 0), "MINKA VOZ", fill="white")
+        draw.text((0, 20), etiqueta, fill="white")
+        draw.text((0, 45), estado, fill="white")
 
-def banner():
-    cls()
-    print(f"""
-{G}{BO}  ╔══════════════════════════════════════════╗
-  ║   🌿  M I N K A  V O Z  🌿            ║
-  ║   Traductor  Kogui ↔ Español           ║
-  ╚══════════════════════════════════════════╝{R}
-""")
+# ── Botón de idioma ───────────────────────────────────────────────────────
+def _cambiar_idioma(channel):
+    global modo
+    if procesando:
+        return
+    modo = "e2k" if modo == "k2e" else "k2e"
+    print(f"\n  🌐 Modo cambiado: {'Kogui→Español' if modo == 'k2e' else 'Español→Kogui'}")
+    mostrar_oled()
 
-def linea(t=""):
-    print(f"  {t}")
+def configurar_boton():
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(PIN_BOTON_IDIOMA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.add_event_detect(PIN_BOTON_IDIOMA, GPIO.FALLING,
+                           callback=_cambiar_idioma, bouncetime=400)
 
-def separador():
-    linea(f"{GR}──────────────────────────────────────────{R}")
-
-def esperar_enter():
-    input(f"\n  {GR}Presiona ENTER para continuar...{R}")
-
-# ── Cargar modelos ────────────────────────────────────────────────────────────────
+# ── Cargar modelo ─────────────────────────────────────────────────────────
 def cargar_modelos():
     global modelo_whisper
-    linea(f"{Y}⏳ Cargando modelo de voz Whisper...{R}")
+    print("⏳ Cargando modelo de voz Whisper...")
     modelo_whisper = whisper.load_model("base")
-    linea(f"{G}✓ Whisper listo{R}")
+    print("✓ Whisper listo")
 
-# ── Grabación ────────────────────────────────────────────────────────────────────
-def _hilo_grabacion():
-    global audio_chunks
-    audio_chunks = []
-
-    def callback(indata, frames, time_info, status):
-        if grabando:
-            audio_chunks.append(indata.copy())
-
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
-                        dtype='float32', callback=callback):
-        while grabando:
-            time.sleep(0.02)
-
-hilo_grab = None
-
-def iniciar_grabacion():
-    global grabando, hilo_grab, audio_chunks
-    if grabando:
-        return
-    grabando = True
-    audio_chunks = []
-    hilo_grab = threading.Thread(target=_hilo_grabacion, daemon=True)
-    hilo_grab.start()
-    print(f"\r  {RD}● GRABANDO...{R}  suelta ESPACIO para traducir        ",
-          end="", flush=True)
-
-def detener_grabacion():
-    global grabando, hilo_grab
-    if not grabando:
-        return
-    grabando = False
-    if hilo_grab:
-        hilo_grab.join(timeout=1)
-
-# ── Síntesis de voz ──────────────────────────────────────────────────────────────
+# ── Síntesis de voz ───────────────────────────────────────────────────────
 def hablar(texto):
     try:
         tts = gTTS(text=texto, lang='es', slow=False)
@@ -127,13 +88,11 @@ def hablar(texto):
         pygame.mixer.quit()
         os.unlink(mp3.name)
     except Exception as e:
-        linea(f"{RD}Error audio: {e}{R}")
+        print(f"Error audio: {e}")
 
-# ── Traducción solo diccionario ───────────────────────────────────────────────────
+# ── Traducción solo diccionario (igual que la versión original) ─────────
 def traducir_inteligente(texto, direccion):
-    """Solo usa el diccionario. Si no encuentra, avisa."""
     encontradas = db.buscar_en_diccionario(texto, direccion)
-
     if encontradas:
         palabras = texto.split()
         resultado = []
@@ -145,362 +104,107 @@ def traducir_inteligente(texto, direccion):
             else:
                 todas = False
                 resultado.append(f"[{p_limpia}]")
-
-        if todas:
-            return " ".join(resultado), "diccionario"
-        else:
-            return " ".join(resultado), "diccionario_parcial"
-
+        return " ".join(resultado), ("diccionario" if todas else "diccionario_parcial")
     return None, "no_encontrado"
 
-# ── Procesar audio ────────────────────────────────────────────────────────────────
-def procesar():
+# ── Procesar un segmento de audio ya capturado ──────────────────────────
+def procesar_audio(audio_int16):
     global procesando
-    if procesando:
-        return
     procesando = True
-
+    mostrar_oled("Transcribiendo...")
     try:
-        if not audio_chunks:
-            print(f"\r  {Y}⚠ No se grabó audio{R}                          ")
-            return
+        tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        sf.write(tmp.name, audio_int16, SAMPLE_RATE)
 
-        audio = np.concatenate(audio_chunks, axis=0)
-        tmp   = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-        sf.write(tmp.name, audio, SAMPLE_RATE)
-
-        print(f"\r  {B}📝 Transcribiendo...{R}                              ",
-              end="", flush=True)
-        lang  = "es" if modo == "e2k" else None
+        lang = "es" if modo == "e2k" else None
         texto = modelo_whisper.transcribe(tmp.name, language=lang)["text"].strip()
         os.unlink(tmp.name)
 
         if not texto:
-            print(f"\r  {Y}⚠ No se entendió, intenta de nuevo{R}           ")
+            print("⚠ No se entendió, intenta de nuevo")
+            mostrar_oled("No entendí")
+            time.sleep(1)
             return
 
-        origen  = "Kogui"   if modo == "k2e" else "Español"
+        origen = "Kogui" if modo == "k2e" else "Español"
         destino = "Español" if modo == "k2e" else "Kogui"
+        print(f"\n[{origen}] {texto}")
 
-        print(f"\r                                                    ")
-        print()
-        linea(f"{GR}┌─ {origen}{R}")
-        linea(f"{GR}│{R}  {texto}")
-        linea(f"{GR}│{R}")
-
-        print(f"  {B}🌐 Traduciendo...{R}", flush=True)
+        mostrar_oled("Traduciendo...")
         traduccion, fuente = traducir_inteligente(texto, modo)
 
         if fuente == "no_encontrado":
-            linea(f"{GR}└─ {destino}{R}")
-            linea(f"{Y}   ⚠ Palabra no encontrada en el diccionario{R}")
-            linea(f"{GR}   Agrégala en [2] Diccionario{R}")
-            print()
+            print(f"⚠ Palabra no encontrada en el diccionario ({destino})")
+            mostrar_oled("No en diccionario")
+            time.sleep(1)
             return
 
-        fuente_label = f"{G}[diccionario]{R}" if fuente == "diccionario" \
-                  else f"{Y}[diccionario parcial]{R}"
-
-        linea(f"{GR}└─ {destino} {fuente_label}{R}")
-        linea(f"{G}{BO}   {traduccion}{R}")
-        print()
-
+        print(f"[{destino}] {traduccion}  ({fuente})")
         db.guardar_conversacion(texto, traduccion, modo, fuente)
 
-        linea(f"{B}🔊 Reproduciendo...{R}")
+        mostrar_oled("Hablando...")
         hablar(traduccion)
-        print()
-        linea(f"{G}✓ Listo — mantén {BO}ESPACIO{R}{G} para grabar de nuevo{R}")
-        print()
 
     except Exception as e:
-        print()
-        linea(f"{RD}✗ Error: {e}{R}")
-        print()
+        print(f"✗ Error: {e}")
     finally:
         procesando = False
+        mostrar_oled()
 
-# ── Pantalla traducir ─────────────────────────────────────────────────────────────
-def pantalla_traducir():
-    global modo, espacio_activo
+# ── Loop de escucha continua con VAD ─────────────────────────────────────
+def escucha_continua():
+    vad = webrtcvad.Vad(VAD_AGRESIVIDAD)
+    mostrar_oled()
+    print("🎤 Escucha continua activa — habla cuando quieras (Ctrl+C para salir)")
 
-    def mostrar():
-        banner()
-        etiqueta = f"Kogui {BO}→{R} Español" if modo == "k2e" else f"Español {BO}→{R} Kogui"
-        linea(f"{CY}Modo:{R}  {etiqueta}")
-        print()
-        separador()
-        print()
-        linea(f"  {BO}[ESPACIO]{R}  Mantén presionado para grabar")
-        linea(f"  {BO}[M]{R}        Cambiar idioma")
-        linea(f"  {BO}[B]{R}        Volver al menú")
-        print()
-        separador()
-        print()
-        linea(f"{G}● Listo — esperando...{R}")
-        print()
+    buffer_audio = []
+    en_habla = False
+    silencio_contador = 0
 
-    mostrar()
-    en_pantalla = True
+    def callback(indata, frames, time_info, status):
+        nonlocal buffer_audio, en_habla, silencio_contador
 
-    def on_press(key):
-        global espacio_activo
-        if key == keyboard.Key.space and not espacio_activo and not procesando:
-            espacio_activo = True
-            iniciar_grabacion()
+        if procesando:
+            return  # no seguir capturando mientras se procesa lo anterior
 
-    def on_release(key):
-        global espacio_activo, modo, en_pantalla
-        if key == keyboard.Key.space and espacio_activo:
-            espacio_activo = False
-            detener_grabacion()
-            threading.Thread(target=procesar, daemon=True).start()
-        if hasattr(key, 'char'):
-            if key.char == 'm' and not grabando and not procesando:
-                modo = "e2k" if modo == "k2e" else "k2e"
-                mostrar()
-            if key.char == 'b':
-                en_pantalla = False
-                return False
+        frame_bytes = indata.tobytes()
+        try:
+            es_habla = vad.is_speech(frame_bytes, SAMPLE_RATE)
+        except Exception:
+            es_habla = False
 
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
-    while en_pantalla:
-        time.sleep(0.1)
-    listener.stop()
+        if es_habla:
+            buffer_audio.append(indata.copy())
+            en_habla = True
+            silencio_contador = 0
+        elif en_habla:
+            buffer_audio.append(indata.copy())
+            silencio_contador += 1
+            if silencio_contador > SILENCIO_MAX_FRAMES:
+                audio_completo = np.concatenate(buffer_audio, axis=0)
+                buffer_audio = []
+                en_habla = False
+                silencio_contador = 0
+                threading.Thread(target=procesar_audio, args=(audio_completo,),
+                                  daemon=True).start()
 
-# ── Diccionario ───────────────────────────────────────────────────────────────────
-def pantalla_diccionario():
-    while True:
-        banner()
-        linea(f"{MG}{BO}📖 Diccionario Kogui{R}")
-        print()
-        linea(f"  {BO}[1]{R}  Ver todas las palabras")
-        linea(f"  {BO}[2]{R}  Buscar palabra")
-        linea(f"  {BO}[3]{R}  Agregar palabra nueva")
-        linea(f"  {BO}[4]{R}  Eliminar palabra")
-        linea(f"  {BO}[B]{R}  Volver")
-        print()
-        op = input("  › ").strip().lower()
-        if op == 'b':
-            break
-        elif op == '1':
-            _ver_palabras()
-        elif op == '2':
-            _buscar_palabra()
-        elif op == '3':
-            _agregar_palabra()
-        elif op == '4':
-            _eliminar_palabra()
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='int16',
+                         blocksize=FRAME_SAMPLES, callback=callback):
+        try:
+            while True:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\nSaliendo...")
 
-def _ver_palabras():
-    banner()
-    linea(f"{MG}{BO}📖 Palabras registradas{R}")
-    print()
-    palabras = db.obtener_todas_palabras()
-    if not palabras:
-        linea(f"{Y}Diccionario vacío — usa [3] para agregar palabras{R}")
-    else:
-        cat_actual = None
-        for pid, kogui, espanol, categoria, notas, fecha in palabras:
-            if categoria != cat_actual:
-                cat_actual = categoria
-                print()
-                linea(f"{CY}{BO}▸ {categoria.upper()}{R}")
-            nota = f"  {GR}({notas}){R}" if notas else ""
-            linea(f"   {G}{BO}{espanol:<22}{R} →  {kogui}{nota}  {GR}#{pid}{R}")
-        print()
-        linea(f"{GR}Total: {len(palabras)} palabras{R}")
-    esperar_enter()
-
-def _buscar_palabra():
-    banner()
-    linea(f"{MG}{BO}🔍 Buscar{R}")
-    print()
-    termino = input("  Kogui o Español: ").strip()
-    if not termino:
-        return
-    resultados = db.buscar_palabra(termino)
-    print()
-    if not resultados:
-        linea(f"{Y}No se encontró '{termino}'{R}")
-    else:
-        for pid, kogui, espanol, categoria, notas, fecha in resultados:
-            linea(f"  {G}{BO}{espanol:<22}{R} →  {kogui}  {GR}[{categoria}] #{pid}{R}")
-            if notas:
-                linea(f"     {GR}Nota: {notas}{R}")
-    esperar_enter()
-
-def _agregar_palabra():
-    banner()
-    linea(f"{MG}{BO}➕ Agregar palabra{R}")
-    print()
-    kogui = input("  Palabra en Kogui:    ").strip()
-    if not kogui:
-        return
-    espanol = input("  Traducción Español:  ").strip()
-    if not espanol:
-        return
-    print()
-    linea(f"{GR}Categorías: saludo, familia, naturaleza, animal, accion, numero, general{R}")
-    categoria = input("  Categoría [general]: ").strip() or "general"
-    notas     = input("  Notas (opcional):    ").strip()
-    print()
-    linea(f"  {CY}Kogui:{R}     {kogui}")
-    linea(f"  {CY}Español:{R}   {espanol}")
-    linea(f"  {CY}Categoría:{R} {categoria}")
-    print()
-    if input(f"  {Y}¿Agregar? [s/n]: {R}").strip().lower() == 's':
-        ok, msg = db.agregar_palabra(kogui, espanol, categoria, notas)
-        linea(f"\n  {G}✓ Agregada{R}" if ok else f"\n  {Y}⚠ La palabra '{kogui}' {msg}{R}")
-    else:
-        linea(f"\n  {GR}Cancelado{R}")
-    esperar_enter()
-
-def _eliminar_palabra():
-    banner()
-    linea(f"{MG}{BO}🗑 Eliminar palabra{R}")
-    print()
-    termino = input("  Buscar palabra a eliminar: ").strip()
-    if not termino:
-        return
-    resultados = db.buscar_palabra(termino)
-    print()
-    if not resultados:
-        linea(f"{Y}No se encontró '{termino}'{R}")
-        esperar_enter()
-        return
-    for pid, kogui, espanol, categoria, notas, fecha in resultados:
-        linea(f"  {G}#{pid}{R}  {BO}{espanol:<22}{R} →  {kogui}  {GR}[{categoria}]{R}")
-    print()
-    try:
-        pid_del = int(input("  ID a eliminar (0 cancelar): ").strip())
-        if pid_del == 0:
-            return
-        if input(f"  {RD}¿Eliminar #{pid_del}? [s/n]: {R}").strip().lower() == 's':
-            ok = db.eliminar_palabra(pid_del)
-            linea(f"\n  {G}✓ Eliminada{R}" if ok else f"\n  {Y}⚠ ID no encontrado{R}")
-    except ValueError:
-        linea(f"  {RD}ID inválido{R}")
-    esperar_enter()
-
-# ── Historial ─────────────────────────────────────────────────────────────────────
-def pantalla_historial():
-    while True:
-        banner()
-        linea(f"{B}{BO}📜 Historial{R}")
-        print()
-        linea(f"  {BO}[1]{R}  Ver últimas 20 traducciones")
-        linea(f"  {BO}[2]{R}  Buscar en historial")
-        linea(f"  {BO}[B]{R}  Volver")
-        print()
-        op = input("  › ").strip().lower()
-        if op == 'b':
-            break
-        elif op == '1':
-            _ver_historial()
-        elif op == '2':
-            _buscar_historial()
-
-def _ver_historial():
-    banner()
-    linea(f"{B}{BO}📜 Últimas traducciones{R}")
-    print()
-    historial = db.obtener_historial(20)
-    if not historial:
-        linea(f"{Y}No hay conversaciones aún{R}")
-    else:
-        for hid, original, traducido, direccion, fuente, fecha in historial:
-            flecha = "Kogui→Esp" if direccion == "k2e" else "Esp→Kogui"
-            fc = G if fuente == "diccionario" else CY
-            print()
-            linea(f"{GR}{fecha}  [{flecha}]  {fc}[{fuente}]{R}")
-            linea(f"  {GR}›{R} {original}")
-            linea(f"  {G}›{R} {traducido}")
-        print()
-        linea(f"{GR}Total: {len(historial)}{R}")
-    esperar_enter()
-
-def _buscar_historial():
-    banner()
-    linea(f"{B}{BO}🔍 Buscar en historial{R}")
-    print()
-    termino = input("  Buscar: ").strip()
-    if not termino:
-        return
-    resultados = db.buscar_historial(termino)
-    print()
-    if not resultados:
-        linea(f"{Y}No se encontró '{termino}'{R}")
-    else:
-        for hid, original, traducido, direccion, fuente, fecha in resultados:
-            flecha = "Kogui→Esp" if direccion == "k2e" else "Esp→Kogui"
-            print()
-            linea(f"{GR}{fecha}  [{flecha}]{R}")
-            linea(f"  {GR}›{R} {original}")
-            linea(f"  {G}›{R} {traducido}")
-        linea(f"\n{GR}Encontradas: {len(resultados)}{R}")
-    esperar_enter()
-
-# ── Estadísticas ──────────────────────────────────────────────────────────────────
-def pantalla_estadisticas():
-    banner()
-    linea(f"{CY}{BO}📊 Estadísticas{R}")
-    print()
-    s = db.estadisticas()
-    linea(f"  {BO}Diccionario{R}")
-    linea(f"  {G}●{R} Palabras Kogui:           {BO}{s['palabras']}{R}")
-    print()
-    linea(f"  {BO}Traducciones{R}")
-    linea(f"  {G}●{R} Total:                    {BO}{s['conversaciones']}{R}")
-    linea(f"  {G}●{R} Kogui → Español:          {BO}{s['kogui_a_esp']}{R}")
-    linea(f"  {G}●{R} Español → Kogui:          {BO}{s['esp_a_kogui']}{R}")
-    linea(f"  {G}●{R} Desde diccionario propio: {BO}{s['desde_diccionario']}{R}")
-    if s['conversaciones'] > 0:
-        pct = round(s['desde_diccionario'] / s['conversaciones'] * 100)
-        print()
-        linea(f"  {GR}El {pct}% de traducciones usaron el diccionario propio{R}")
-    esperar_enter()
-
-# ── Menú principal ────────────────────────────────────────────────────────────────
-def menu_principal():
-    while True:
-        banner()
-        s = db.estadisticas()
-        linea(f"{GR}Palabras: {s['palabras']}  |  Traducciones: {s['conversaciones']}{R}")
-        print()
-        separador()
-        print()
-        linea(f"  {BO}[1]{R}  🎤  Traducir")
-        linea(f"  {BO}[2]{R}  📖  Diccionario Kogui")
-        linea(f"  {BO}[3]{R}  📜  Historial")
-        linea(f"  {BO}[4]{R}  📊  Estadísticas")
-        linea(f"  {BO}[Q]{R}  Salir")
-        print()
-        separador()
-        print()
-
-        op = input("  › ").strip().lower()
-        if op == 'q':
-            banner()
-            linea(f"{G}Hasta pronto 🌿{R}\n")
-            break
-        elif op == '1':
-            pantalla_traducir()
-        elif op == '2':
-            pantalla_diccionario()
-        elif op == '3':
-            pantalla_historial()
-        elif op == '4':
-            pantalla_estadisticas()
-
-# ── Main ──────────────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────
 def main():
     db.inicializar_db()
-    banner()
+    configurar_boton()
     cargar_modelos()
-    time.sleep(1)
-    menu_principal()
+    try:
+        escucha_continua()
+    finally:
+        GPIO.cleanup()
 
 if __name__ == "__main__":
     main()
