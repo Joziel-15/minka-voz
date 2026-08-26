@@ -71,7 +71,16 @@ if [ "${RESP,,}" != "n" ]; then
     fi
 fi
 
-# ── 6. Servicio systemd (arranque automático) ───────────────────────────────
+# ── 6. Dashboard Web (opcional) ─────────────────────────────────────────────
+echo ""
+read -r -p "🌐 ¿Instalar Dashboard Web (profesores/aprendices, puerto 5000)? [S/n] " RESP
+if [ "${RESP,,}" != "n" ]; then
+    pip install -r "$DIR/dashboard/requirements.txt"
+    echo "✓ Dashboard instalado — accede en http://$(hostname -I | awk '{print $1}'):5000"
+    echo "  Usuario: admin  |  Contrasena: admin  (cambiala despues)"
+fi
+
+# ── 7. Servicio systemd (arranque automático) ───────────────────────────────
 echo ""
 read -r -p "🚀 ¿Instalar arranque automático con systemd? [S/n] " RESP
 if [ "${RESP,,}" != "n" ]; then
@@ -108,8 +117,12 @@ echo "   Prueba los módulos tras reiniciar:"
 echo "     arecord -l        # debe listar la tarjeta HiFiBerry ADC  (INMP441)"
 echo "     aplay -l          # debe listar la tarjeta HiFiBerry DAC  (MAX98357A)"
 echo ""
-echo "   Ejecutar manualmente:"
+echo "   Traductor de voz:"
 echo "     cd $DIR && source venv/bin/activate && python3 minka_voz.py"
+echo ""
+echo "   Dashboard web (si lo instalaste):"
+echo "     cd $DIR/dashboard && source $DIR/venv/bin/activate && python3 app.py"
+echo "     http://$(hostname -I 2>/dev/null | awk '{print $1}'):5000"
 echo ""
 echo "   ⚠ REINICIA la Raspberry Pi para aplicar los overlays I2S:"
 echo "     sudo reboot"

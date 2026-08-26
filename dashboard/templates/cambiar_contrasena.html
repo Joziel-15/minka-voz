@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Cambiar contrasena — MINKA VOZ{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <h5 class="mb-3"><i class="bi bi-key me-2"></i>Cambiar contrasena</h5>
+        <form method="POST">
+          <div class="mb-3">
+            <label class="form-label">Contrasena actual</label>
+            <input type="password" name="actual" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Nueva contrasena</label>
+            <input type="password" name="nueva" class="form-control" required minlength="4">
+          </div>
+          <button type="submit" class="btn btn-success w-100">Actualizar</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

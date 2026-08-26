@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Historial — MINKA VOZ{% endblock %}
+
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-clock-history me-2"></i>Historial de traducciones</h4>
+
+<!-- Filters -->
+<form class="row g-2 mb-3" method="GET">
+  <div class="col-md-3">
+    <input type="text" name="q" class="form-control" placeholder="Buscar..." value="{{ request.args.get('q','') }}">
+  </div>
+  <div class="col-md-3">
+    <select name="dir" class="form-select">
+      <option value="">Todas las direcciones</option>
+      <option value="k2e" {{ 'selected' if request.args.get('dir')=='k2e' }}>Kogui → Español</option>
+      <option value="e2k" {{ 'selected' if request.args.get('dir')=='e2k' }}>Español → Kogui</option>
+    </select>
+  </div>
+  <div class="col-md-3">
+    <select name="src" class="form-select">
+      <option value="">Todas las fuentes</option>
+      <option value="diccionario" {{ 'selected' if request.args.get('src')=='diccionario' }}>Diccionario</option>
+      <option value="diccionario_parcial" {{ 'selected' if request.args.get('src')=='diccionario_parcial' }}>Parcial</option>
+    </select>
+  </div>
+  <div class="col-md-3 d-flex gap-2">
+    <button class="btn btn-outline-success" type="submit"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+    <a href="{{ url_for('historial') }}" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
+  </div>
+</form>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-success">
+          <tr>
+            <th class="d-none d-md-table-cell">Fecha</th>
+            <th>Original</th>
+            <th>Traduccion</th>
+            <th>Direccion</th>
+            <th>Fuente</th>
+            {% if current_user.is_admin %}
+            <th class="text-end"></th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in historial %}
+          <tr>
+            <td class="d-none d-md-table-cell text-body-secondary small">{{ h.fecha[:16] }}</td>
+            <td>{{ h.message }}</td>
+            <td class="text-success fw-semibold">{{ h.texto_traducido }}</td>
+            <td>
+              <span class="badge bg-{{ 'success' if h.direccion=='k2e' else 'primary' }}">
+                {{ 'K→ES' if h.direccion=='k2e' else 'ES→K' }}
+              </span>
+            </td>
+            <td>
+              <span class="badge bg-{{ 'success' if h.fuente=='diccionario' else 'warning text-dark' if h.fuente=='diccionario_parcial' else 'secondary' }}">
+                {{ h.fuente[:8] }}
+              </span>
+            </td>
+            {% if current_user.is_admin %}
+            <td class="text-end">
+              <form method="POST" action="{{ url_for('borrar_historial', cid=h.id) }}"
+                    class="d-inline" onsubmit="return confirm('Eliminar este registro?')">
+                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-body-secondary py-4">Sin registros</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer text-body-secondary small d-flex justify-content-between">
+    <span>{{ total }} registro(s) en total</span>
+    <span>
+      Pagina {{ pagina }}/{{ total_paginas }}
+      {% if pagina > 1 %}
+        <a href="?{{ request.query_string.decode().replace('p=' ~ pagina, 'p=' ~ (pagina-1)) }}" class="text-success">
+          <i class="bi bi-chevron-left"></i>
+        </a>
+      {% endif %}
+      {% if pagina < total_paginas %}
+        <a href="?{{ request.query_string.decode().replace('p=' ~ pagina, 'p=' ~ (pagina+1)) }}" class="text-success">
+          <i class="bi bi-chevron-right"></i>
+        </a>
+      {% endif %}
+    </span>
+  </div>
+</div>
+{% endblock %}

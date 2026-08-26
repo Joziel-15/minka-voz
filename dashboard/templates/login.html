@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MINKA VOZ — Iniciar sesion</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body class="bg-body">
+
+<div class="min-vh-100 d-flex align-items-center justify-content-center">
+  <div class="card shadow-lg border-0" style="width:100%;max-width:400px">
+    <div class="card-body p-4">
+      <div class="text-center mb-4">
+        <i class="bi bi-translate text-success" style="font-size:3rem"></i>
+        <h2 class="mt-2 fw-bold text-success">MINKA VOZ</h2>
+        <p class="text-body-secondary small">Traductor Kogui ↔ Español</p>
+      </div>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+          <div class="alert alert-{{ cat }} py-2 small">{{ msg }}</div>
+        {% endfor %}
+      {% endwith %}
+      <form method="POST">
+        <div class="mb-3">
+          <label class="form-label">Usuario</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-person"></i></span>
+            <input type="text" name="username" class="form-control" required autofocus>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Contrasena</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" name="password" class="form-control" required>
+          </div>
+        </div>
+        <button class="btn btn-success w-100" type="submit">
+          <i class="bi bi-box-arrow-in-right me-1"></i>Ingresar
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+</body>
+</html>

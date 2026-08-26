@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Estadisticas — MINKA VOZ{% endblock %}
+
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-bar-chart-line me-2"></i>Estadisticas</h4>
+
+<!-- Stat cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-success">{{ stats.total_palabras }}</div>
+        <small class="text-body-secondary">Palabras</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-primary">{{ stats.total_conversaciones }}</div>
+        <small class="text-body-secondary">Traducciones</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-info">{{ stats.hoy }}</div>
+        <small class="text-body-secondary">Hoy</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-warning">{{ stats.semana }}</div>
+        <small class="text-body-secondary">Semana</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <!-- Activity chart -->
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent"><h6 class="mb-0">Actividad (30 dias)</h6></div>
+      <div class="card-body"><canvas id="chartDias" height="220"></canvas></div>
+    </div>
+  </div>
+  <!-- Categories -->
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent"><h6 class="mb-0">Categorias del diccionario</h6></div>
+      <div class="card-body"><canvas id="chartCats" height="220"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4 mt-1">
+  <!-- Direction -->
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent"><h6 class="mb-0">Por direccion</h6></div>
+      <div class="card-body d-flex justify-content-center"><canvas id="chartDir" height="180"></canvas></div>
+    </div>
+  </div>
+  <!-- Source -->
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent"><h6 class="mb-0">Por fuente</h6></div>
+      <div class="card-body d-flex justify-content-center"><canvas id="chartSrc" height="180"></canvas></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+fetch('/api/stats').then(r => r.json()).then(d => {
+  const colors = ['#198754','#0d6efd','#ffc107','#dc3545','#0dcaf0','#6610f2','#fd7e14'];
+
+  // Dias
+  new Chart(document.getElementById('chartDias'), {
+    type:'line',
+    data:{
+      labels:d.por_dia.map(x=>x.dia.slice(5)),
+      datasets:[{label:'Traducciones',data:d.por_dia.map(x=>x.total),
+        borderColor:'#198754',backgroundColor:'rgba(25,135,84,0.1)',fill:true,tension:0.3}]
+    },
+    options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+  });
+
+  // Categorias
+  new Chart(document.getElementById('chartCats'), {
+    type:'doughnut',
+    data:{
+      labels:d.por_categoria.map(x=>x.categoria),
+      datasets:[{data:d.por_categoria.map(x=>x.total),backgroundColor:colors}]
+    },
+    options:{responsive:true,plugins:{legend:{position:'bottom',labels:{boxWidth:12}}}}
+  });
+
+  // Direccion
+  new Chart(document.getElementById('chartDir'), {
+    type:'pie',
+    data:{
+      labels:d.por_direccion.map(x=>x.direccion==='k2e'?'Kogui→Español':'Español→Kogui'),
+      datasets:[{data:d.por_direccion.map(x=>x.total),backgroundColor:['#198754','#0d6efd']}]
+    },
+    options:{responsive:true,plugins:{legend:{position:'bottom',labels:{boxWidth:12}}}}
+  });
+
+  // Fuente
+  new Chart(document.getElementById('chartSrc'), {
+    type:'pie',
+    data:{
+      labels:d.por_fuente.map(x=>x.fuente),
+      datasets:[{data:d.por_fuente.map(x=>x.total),backgroundColor:colors}]
+    },
+    options:{responsive:true,plugins:{legend:{position:'bottom',labels:{boxWidth:12}}}}
+  });
+});
+</script>
+{% endblock %}

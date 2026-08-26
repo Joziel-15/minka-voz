@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Usuarios — MINKA VOZ{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0"><i class="bi bi-people me-2"></i>Gestion de usuarios</h4>
+  <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalAgregar">
+    <i class="bi bi-person-plus me-1"></i>Nuevo usuario
+  </button>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-success">
+          <tr>
+            <th>Usuario</th>
+            <th>Email</th>
+            <th>Rol</th>
+            <th>Estado</th>
+            <th>Creado</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in usuarios %}
+          <tr>
+            <td class="fw-semibold">{{ u.username }}</td>
+            <td>{{ u.email }}</td>
+            <td>
+              <span class="badge bg-{{ 'danger' if u.role=='admin' else 'primary' if u.role=='profesor' else 'secondary' }}">
+                {{ u.role }}
+              </span>
+            </td>
+            <td>
+              <span class="badge bg-{{ 'success' if u.active else 'danger' }}">
+                {{ 'Activo' if u.active else 'Inactivo' }}
+              </span>
+            </td>
+            <td class="text-body-secondary small">{{ u.created_at[:10] }}</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary" title="Editar"
+                onclick='editar_usuario({{ u|tojson }})'>
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="POST" action="{{ url_for('toggle_usuario', uid=u.id) }}" class="d-inline">
+                <button class="btn btn-sm btn-outline-{{ 'warning' if u.active else 'success' }}" title="{{ 'Desactivar' if u.active else 'Activar' }}">
+                  <i class="bi bi-{{ 'pause-circle' if u.active else 'play-circle' }}"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Agregar -->
+<div class="modal fade" id="modalAgregar" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('agregar_usuario') }}">
+        <div class="modal-header border-0">
+          <h5 class="modal-title">Nuevo usuario</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Usuario *</label>
+            <input type="text" name="username" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email *</label>
+            <input type="email" name="email" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Contrasena *</label>
+            <input type="password" name="password" class="form-control" required minlength="4">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Rol</label>
+            <select name="role" class="form-select">
+              <option value="alumno">Alumno</option>
+              <option value="profesor">Profesor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-success">Crear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Editar -->
+<div class="modal fade" id="modalEditar" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" id="formEditar">
+        <div class="modal-header border-0">
+          <h5 class="modal-title">Editar usuario</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control" id="editEmail" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Rol</label>
+            <select name="role" class="form-select" id="editRole">
+              <option value="alumno">Alumno</option>
+              <option value="profesor">Profesor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="form-check form-switch">
+            <input type="checkbox" name="active" class="form-check-input" id="editActive" value="1">
+            <label class="form-check-label" for="editActive">Activo</label>
+          </div>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function editar_usuario(u) {
+  document.getElementById('formEditar').action = '/users/edit/' + u.id;
+  document.getElementById('editEmail').value = u.email;
+  document.getElementById('editRole').value = u.role;
+  document.getElementById('editActive').checked = !!u.active;
+  new bootstrap.Modal(document.getElementById('modalEditar')).show();
+}
+</script>
+{% endblock %}

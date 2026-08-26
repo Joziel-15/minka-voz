@@ -7,5 +7,11 @@ RPi.GPIO
 luma.oled
 luma.core
 
+# Dashboard web (opcional)
+flask>=3.0
+flask-login>=0.6
+werkzeug>=3.0
+gunicorn>=21.0
+
 # Opcional (lo instala instalar.sh): TTS offline de alta calidad
 # piper-tts
